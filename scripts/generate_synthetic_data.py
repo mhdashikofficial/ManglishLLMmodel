@@ -2,70 +2,56 @@ import json
 import random
 import os
 
-# Example predefined intents and entities for StrawCore AI booking domains
-INTENTS = [
-    "hotel_booking",
-    "academic_consultation",
-    "medical_appointment",
-    "payment_query"
-]
-
-# A few hardcoded examples to illustrate the data structure.
-# In a real scenario, this script would call an API (like OpenAI's GPT-4 or Gemini) 
-# to generate thousands of diverse examples.
-EXAMPLES = [
+TEMPLATES = [
     {
         "domain": "hotel_booking",
-        "instruction": "The user wants to book a hotel room in Kochi for 2 people.",
-        "manglish_input": "Enikku kochi yil oru hotel room book cheyyanam, 2 perundu.",
-        "malayalam_input": "എനിക്ക് കൊച്ചിയിൽ ഒരു ഹോട്ടൽ റൂം ബുക്ക് ചെയ്യണം, 2 പേരുണ്ട്.",
-        "response": "Sure, I can help you with your hotel booking in Kochi. Ethu divasam aanu booking vendathu? (Which date do you need the booking for?)"
+        "scenarios": [
+            {"inp": "Enikku kochi yil oru hotel room book cheyyanam.", "out": "Sure, Kochi-yil ethra divasatheykkanu room vendathu? (How many days do you need the room for in Kochi?)"},
+            {"inp": "Munnar il family suite lathyam aano?", "out": "Njangal Munnar-il family suites check cheyyam. Athinte price details veno? (Should I check the price details for Munnar family suites?)"},
+            {"inp": "Hotel il AC room undo?", "out": "Athe, AC rooms available aanu. Ethra perundu ningalude koode? (Yes, AC rooms are available. How many people are with you?)"}
+        ]
     },
     {
         "domain": "medical_appointment",
-        "instruction": "The user is asking to schedule a consultation with a cardiologist.",
-        "manglish_input": "Oru cardiologist de appointment edukkanam nale.",
-        "malayalam_input": "ഒരു കാർഡിയോളജിസ്റ്റിന്റെ അപ്പോയിന്റ്മെന്റ് എടുക്കണം നാളെ.",
-        "response": "Certainly. Nale ethra manikkanu appointment vendathu? (What time do you need the appointment tomorrow?)"
+        "scenarios": [
+            {"inp": "Nale oru ENT doctor-e kananam.", "out": "Nale morning slots available aanu. Ningalude convenient time parayam? (What is your convenient time for tomorrow morning?)"},
+            {"inp": "Cardiologist de appointment kittumo?", "out": "Dr. Joseph available aanu. Ningalude contact number tharumo booking-nu? (Dr. Joseph is available. Can you provide your contact number for booking?)"}
+        ]
     },
     {
         "domain": "academic_consultation",
-        "instruction": "User wants to know the fee for course consultation.",
-        "manglish_input": "Course consultation nu ethra aanu fees?",
-        "malayalam_input": "കോഴ്സ് കൺസൾട്ടേഷന് എത്രയാണ് ഫീസ്?",
-        "response": "The fee for our academic consultation is ₹500. Payment cheyyan ulla link njan thaazhe nalkam. (I'll provide the payment link below.)"
+        "scenarios": [
+            {"inp": "Abroad study-ne patti consultation venam.", "out": "Athe, njangalude experts help cheyyam. Ningalude interest ulla country ethannu? (Yes, our experts can help. Which country are you interested in?)"},
+            {"inp": "MBA course fees detail venam.", "out": "MBA-de detailed brochure njan send cheyyam. Ningalude email tharumo? (I will send the MBA brochure. Can you provide your email?)"}
+        ]
     }
 ]
 
-def format_for_llama3(system_prompt, user_msg, assistant_msg):
-    """
-    Formats the conversation using Llama-3 Instruct tags.
-    """
-    return f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_msg}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{assistant_msg}<|eot_id|>"
+MALAYALAM_VOCAB = {
+    "hotel": "ഹോട്ടൽ", "room": "റൂം", "book": "ബുക്ക്", "kochi": "കൊച്ചി", 
+    "doctor": "ഡോക്ടർ", "appointment": "അപ്പോയിന്റ്മെന്റ്", "fees": "ഫീസ്"
+}
 
-def generate_dataset(output_path, num_samples=100):
-    system_prompt = "You are StrawCore AI, a highly capable assistant specializing in handling client bookings, consultations, and payments. You understand English, phonetic Manglish, and Malayalam natively."
-    
+def format_qwen_chatml(system, user, assistant):
+    return f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{assistant}<|im_end|>"
+
+def generate(output_path, n=500):
+    system = "You are StrawCore AI, a client management assistant speaking Manglish and Malayalam script fluently."
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
     with open(output_path, "w", encoding="utf-8") as f:
-        # Generate mixed manglish and malayalam dataset
-        for i in range(num_samples):
-            example = random.choice(EXAMPLES)
+        for _ in range(n):
+            temp = random.choice(TEMPLATES)
+            scenario = random.choice(temp["scenarios"])
             
-            # Randomly choose between Manglish or pure Malayalam script
-            user_input = example["manglish_input"] if random.random() > 0.4 else example["malayalam_input"]
-            response = example["response"]
-            
-            text_block = format_for_llama3(system_prompt, user_input, response)
-            
-            record = {
-                "text": text_block,
-                "domain": example["domain"]
-            }
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            
-    print(f"Generated {num_samples} samples and saved to {output_path}")
+            # 50% chance to convert input to native Malayalam script
+            user_msg = scenario["inp"]
+            if random.random() > 0.5:
+                for k, v in MALAYALAM_VOCAB.items():
+                    user_msg = user_msg.replace(k, v)
+                    
+            text = format_qwen_chatml(system, user_msg, scenario["out"])
+            f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+    print(f"Generated {n} samples in {output_path}")
 
 if __name__ == "__main__":
-    generate_dataset("C:/Users/mhdas/Documents/ManglishLLMmodel/data/manglish_booking_data.jsonl", num_samples=500)
+    generate("data/manglish_booking_data.jsonl", 500)

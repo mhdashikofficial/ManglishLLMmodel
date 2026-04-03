@@ -1,28 +1,25 @@
 import yaml
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+import os
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer
-import os
+from trl import SFTTrainer, SFTConfig
 
-def load_config():
+def run_3b_sft():
     with open("configs/qlora_config.yaml", "r") as f:
-        return yaml.safe_load(f)
-
-def run_training():
-    config = load_config()
-    model_id = config["model_id"]
-    
-    print(f"Loading CPU LoRA configuration for base model: {model_id}")
+        config = yaml.safe_load(f)
+        
+    print(f"LOADING 3B MODEL (BF16 CPU): {config['model_id']}")
     
     model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        device_map="cpu", 
-        torch_dtype=torch.float32 
+        config["model_id"],
+        device_map="cpu",
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True
     )
     
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(config["model_id"])
     tokenizer.pad_token = tokenizer.eos_token
     
     lora_config = LoraConfig(
@@ -37,13 +34,11 @@ def run_training():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     
-    print(f"Loading dataset from: {config['dataset_path']}")
+    print(f"Dataset Loading: {config['dataset_path']}...")
     dataset = load_dataset("json", data_files={"train": config["dataset_path"]}, split="train")
+    dataset = dataset.select(range(min(500, len(dataset))))
     
-    # Select only 15 samples just to prove the VPS can finish an epoch!
-    dataset = dataset.select(range(min(15, len(dataset))))
-    
-    from trl import SFTConfig
+    # In newer TRL versions, max_seq_length is sometimes part of SFTConfig or SFTTrainer
     training_args = SFTConfig(
         dataset_text_field="text",
         output_dir=config["output_dir"],
@@ -54,7 +49,8 @@ def run_training():
         optim=config["optim"],
         num_train_epochs=config["num_train_epochs"],
         report_to="none",
-        use_cpu=True
+        use_cpu=True,
+        gradient_checkpointing=config["gradient_checkpointing"]
     )
     
     trainer = SFTTrainer(
@@ -64,11 +60,15 @@ def run_training():
         args=training_args,
     )
     
-    print("Starting CPU-Bound Fine-tuning (This will still be slow!)...")
+    # Explicitly set max_seq_length on trainer if needed
+    if hasattr(config, 'max_seq_length'):
+        trainer.max_seq_length = config['max_seq_length']
+
+    print("LAUNCHING 3B MANG-TRAIN (EPYC CPU + NVMe SWAP)...")
     trainer.train()
-    print("Training finished! Saving model...")
+    
+    print("SUCCESS! Saving 3B Adapters...")
     trainer.model.save_pretrained(config["output_dir"])
-    tokenizer.save_pretrained(config["output_dir"])
 
 if __name__ == "__main__":
-    run_training()
+    run_3b_sft()
